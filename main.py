@@ -10,20 +10,50 @@ from torchvision import transforms
 from sklearn.datasets import fetch_lfw_people
 from utils import GenIdx,IdentitySampler, prepare_dataset, prepare_set, \
                     prepare_data_ids,LFW_training_Data
+from loss import contrastive_loss
+import tensorflow as tf
 import numpy as np
+import torch.nn as nn
+from sklearn.metrics.pairwise import euclidean_distances
+from pytorch_metric_learning import miners, distances, reducers, losses
+
+torch.cuda.empty_cache()
+
 
 #### Fonction utiles ####
+
+def cosine_similarity_matrix(features):
+    # Compute cosine similarity matrix based on the feature representations
+    # features: ndarray of shape (num_samples, feature_dim)
+    # Returns: similarity_matrix of shape (num_samples, num_samples)
+    similarity_matrix = np.dot(features, features.T)
+    norms = np.linalg.norm(features, axis=1)
+    similarity_matrix /= np.outer(norms, norms)
+    return similarity_matrix
 
 # Fonction d'entraînement
 def train(epoch, criterion, optimizer, trainloader, device, net):
 
-    """
+    net.to(device)
+    net.train()
 
-    Se réferer éventuellement au laboratoire 5
-    On pensera à mettre les données sur 3 canaux au lieux de 1 via expand :
-    https://pytorch.org/docs/stable/generated/torch.Tensor.expand.html
+    # Boucle sur les batch de train
+    for batch_idx, (data, labels) in enumerate(trainloader):
+        optimizer.zero_grad()
+        data, labels = data.to(device), labels.to(device)
 
-    """
+        # Passage des images sur 3 canaux (RGB)
+        data = data.expand(-1, 3, -1, -1) # Grey image was defined on 1 channel. Now defined on 3 channels as an RGB image would be. 
+
+        avg_pool, embeddings = net(data)
+        indices_tuple = mining_func(embeddings, labels)
+
+        loss = criterion(embeddings, labels, indices_tuple)
+
+        loss.backward()
+        optimizer.step()
+        if batch_idx % 5 == 0:
+            print("Epoch :", epoch, "Iteration : ",batch_idx," Loss =  ", loss.item())
 
 # Fonction permettant la validation
 def valid(query_gall_loader, query_gallery_labels):
@@ -32,8 +62,11 @@ def valid(query_gall_loader, query_gallery_labels):
     query_gall_feat_pool, query_gall_feat = extract_query_gall_feat(query_gall_loader, n_query_gall, net, test_batch_size)
 
     # Compute the similarity matrix based on the extracted features matrix:
-    similarity_matrix_pool = "A définir"
-    similarity_matrix_feat = "A définir"
+    similarity_matrix_pool = 1 / (1 +  euclidean_distances(query_gall_feat_pool, query_gall_feat_pool))
+    similarity_matrix_feat = 1 / (1 +  euclidean_distances(query_gall_feat, query_gall_feat))
+    # Compute similarity matrices based on the extracted features
+    # similarity_matrix_pool = cosine_similarity_matrix(query_gall_feat_pool)
+    # similarity_matrix_feat = cosine_similarity_matrix(query_gall_feat)
 
     # Evaluation - Compute metrics (Rank-1, Rank-5, mAP)
     cmc_att, mAP_att  = evaluation(-similarity_matrix_pool, query_gallery_labels)
@@ -59,18 +92,20 @@ def extract_query_gall_feat(query_gall_loader, ngall, net, batch_size):
     print('Extracting Gallery Feature...')
     # start = time.time()
     ptr = 0
-    feat_size = 512
+    feat_size = 2048
     gall_feat_pool = np.zeros((ngall, feat_size))
     gall_feat = np.zeros((ngall, feat_size))
 
     with torch.no_grad():
         # Boucle itérant sur chaque batch de validation à définir ici
-        for A_definir in "A définir":
-            feat_pool, feat = "A définir" # Extraire features pour chaque batch
+        for batch_idx, (data, labels) in enumerate(query_gall_loader):
+            data = data.to(device)
+            data = data.expand(-1, 3, -1, -1) # Grey image was defined on 1 channel. Now defined on 3 channels as an RGB image would be. 
+            feat_pool, feat = net(data) # Extraire features pour chaque batch
 
-        gall_feat_pool[ptr:ptr + batch_size, :] = feat_pool.detach().cpu().numpy()
-        gall_feat[ptr:ptr + batch_size, :] = feat.detach().cpu().numpy()
-        ptr = ptr + batch_size
+            gall_feat_pool[ptr:ptr + batch_size, :] = feat_pool.detach().cpu().numpy()
+            gall_feat[ptr:ptr + batch_size, :] = feat.detach().cpu().numpy()
+            ptr = ptr + batch_size
 
     return gall_feat_pool, gall_feat
 
@@ -105,8 +140,8 @@ if __name__ == "__main__":
     global_img_pos = GenIdx(y)  # Get the images positions in list for each specific identity
 
 
-    folds = "A définir"  # Number of fold K for cross-validation
-    epochs = "A définir" # Number of epochs
+    folds = 5  # Number of fold K for cross-validation
+    epochs = 100 # Number of epochs
 
     # Augmentation de la taille des images
     img_h, img_w = 288, 144
@@ -129,17 +164,32 @@ if __name__ == "__main__":
 
     # Définir votre ou vos fonctions de pertes
     # Vous pouvez définir votre/vos fonction de pertes dans le fichier loss.py
-    criterion_1 = "A définir"
+    criterion_1 = nn.MarginRankingLoss(margin=1.0)
 
+    # Triplet loss function
+    distance = distances.CosineSimilarity()
+    reducer = reducers.ThresholdReducer(low=0)
+    loss_func = losses.TripletMarginLoss(margin=0.2, distance=distance, reducer=reducer)
+    mining_func = miners.TripletMarginMiner(margin=0.2, distance=distance, type_of_triplets="semihard")
+
+    
     for fold in range(folds):
         net = model(n_classes).to(device)
 
         # Définir votre optimizer :
-        opt = "A définir"
+        opt = optim.Adam(net.parameters(), lr=0.0001)
 
         # Préparation du query / gallery set pour la validation
         # A noter que query set = gallery set si on compte comparer chaque image de la base avec toute les autres
-        query_gall_set, n_query_gall = prepare_set(X, global_img_pos, val_ids_lists[fold], transform=transform_test)
+        # query_gall_set, n_query_gall = prepare_set(X, global_img_pos, val_ids_lists[fold], transform=transform_test)
+        # Create an instance of the prepare_set class
+        prepare_set_object = prepare_set(X, global_img_pos, val_ids_lists[fold], transform=transform_test)
+
+        # Access the query_gall_set and n_query_gall attributes directly
+        query_gall_set = prepare_set_object
+        # query_gall_set = prepare_set_object.val_test_image
+        querry_gall_label = prepare_set_object.val_test_label
+        n_query_gall = len(prepare_set_object)
         query_gall_loader = torch.utils.data.DataLoader(query_gall_set, batch_size=test_batch_size, shuffle=False)
 
         best_map = 0
@@ -158,11 +208,11 @@ if __name__ == "__main__":
             trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, \
                                                       sampler=sampler, drop_last=True)
 
-            train(epoch, criterion_1, opt, trainloader, device, net)
+            train(epoch, loss_func, opt, trainloader, device, net)
 
             # Call the validation every two epochs
             if epoch != 0 and epoch % 2 == 0:
-                cmc, mAP, cmc_att, mAP_att = valid(query_gall_loader, query_gall_set.val_test_label)
+                cmc, mAP, cmc_att, mAP_att = valid(query_gall_loader, querry_gall_label)
 
                 # Save model based on validation mAP
                 if mAP > best_map:  # Usual saving
@@ -182,4 +232,6 @@ if __name__ == "__main__":
 
     # Tester ici ou dans un fichier à part votre modèle sur les données de test.
 
+    # On recup le meilleur fold 
+    print(state)
 

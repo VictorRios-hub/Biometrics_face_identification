@@ -3,6 +3,7 @@ import numpy as np
 from torch.utils.data.sampler import Sampler
 import torch.utils.data as data
 import random
+import torch
 
 # Renvoie la base de données d'images sous X et les labels sous y
 # Conserve uniquement 15 images par personnes maximum
@@ -12,48 +13,79 @@ def prepare_dataset(lfw_people, nb_img_per_id_to_keep):
     X_init = lfw_people.images
     y_init = lfw_people.target
 
-    """
-    
-    Code attendu :
-    Votre base X, y à définir. 
-    
-    """
+    X = []  
+    y = []  
 
-    X, y, n_classes = "A définir"
+    # Dictionary pour comptage
+    person_image_count = {}
+
+    # Pour chaque imgaes
+    for i in range(n_samples):
+        image = X_init[i]
+        label = y_init[i]
+
+        if label in person_image_count:
+            # Check moins de 15 
+            if person_image_count[label] < nb_img_per_id_to_keep:
+                X.append(image)
+                y.append(label)
+                person_image_count[label] += 1
+        else:
+            # new person
+            X.append(image)
+            y.append(label)
+            person_image_count[label] = 1
+
+    X = np.array(X)
+    y = np.array(y)
+
+    # Calculate the number of unique classes (persons)
+    n_classes = len(np.unique(y))
 
     return X, y, n_classes
 
 
+
 def prepare_data_ids(n_classes):
+    # ids generate
+    all_ids = list(range(n_classes))
 
-    """
+    # test fold
+    test_ids = all_ids[:21]
 
-    Code attendu :
-    Définissez train_ids_lists, val_ids_lists, test_ids_list
+    # On réserve les 21 premiers labels pour test
+    train_val_ids = all_ids[21:]
 
-    """
+    # 5 ids par fold d'entraînement/validation
+    fold_size = (n_classes -21) // 5
 
-    train_ids_lists, val_ids_lists, test_ids_list = "A définir"
+    # k_folds divise
+    train_val_ids_lists = [train_val_ids[i:i + fold_size] for i in range(0, n_classes, fold_size)]
 
-    return train_ids_lists, val_ids_lists, test_ids_list
+    # Séparer les 5 folds en 4 folds d'entraînement et 1 fold de validation à tour de rôle
+    train_ids_lists = []
+    val_ids_lists = []
+    for i in range(5):
+        val_ids_lists.append(train_val_ids_lists[i])
+        train_ids_lists.append([id for ids in train_val_ids_lists[:i] + train_val_ids_lists[i + 1:] for id in ids])
+
+    return train_ids_lists, val_ids_lists, test_ids
 
 def extract_fold_subset(X, img_pos, img_ids_to_extract):
+    # Initialize les listes 
+    X_extracted = []
+    y_extracted = []
 
-    """
+    for idx, new_label in enumerate(img_ids_to_extract):
 
-    Code attendu :
-
-    A partir des identités d'entraînement pour un fold donné (img_ids_to_extract):
-    X_extracted devra être la sous base de X contenant uniquement les images correspondant aux ids de img_ids_to_extract
-    y_extracted devra être la sous base de labels. Il est conseillé de re-labeliser les images directement, en
-    partant de 0. C'est à dire que les 15 premières images de la sous bases seront associées au nouveau label 0,
-    les 15 suivantes au nouveau label 1 etc...
-
-    """
-
-    X_extracted, y_extracted = "A définir"
+        for i in range (15):
+            # Recup l'image et le label
+            image = X[img_pos[img_ids_to_extract[idx]][i]]
+            X_extracted.append(image)
+            y_extracted.append(idx)
 
     return X_extracted, y_extracted
+
 
 class prepare_set(data.Dataset):
     """
@@ -99,6 +131,7 @@ class LFW_training_Data(data.Dataset):
     def __getitem__(self, index):
         #Dataset[i] return image with its corresponding label
         img, target = self.train_images[self.cIndex[index]], self.train_labels[self.cIndex[index]]
+
         img = self.transform(img)
         return img, target
 

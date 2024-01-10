@@ -1,13 +1,14 @@
 import numpy as np
 
-def evaluation(distmat, query__gallery_labels, max_rank=20):
+def evaluation(distmat, query_gallery_labels, max_rank=20):
     num_q, num_g = distmat.shape
     if num_g < max_rank:
         max_rank = num_g
         print("Note: number of gallery samples is quite small, got {}".format(num_g))
     # Get the the matrix, which a row give the indices of the lowest scores by index in distmat
     indices = np.argsort(distmat, axis=1)
-    matches = (query__gallery_labels[indices] == query__gallery_labels[:, np.newaxis]).astype(np.int32)
+    query_gallery_labels = np.array(query_gallery_labels)
+    matches = (query_gallery_labels[indices] == query_gallery_labels[:, np.newaxis]).astype(np.int32)
     # print(f"Matches : {matches}")
     # compute cmc curve for each query
     all_cmc = []
