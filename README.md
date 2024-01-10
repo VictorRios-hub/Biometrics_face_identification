@@ -1,5 +1,4 @@
-# Rapport de laboratoire SYS828 - Approfondissements
+# Static face identification
 
-Le code ici présenté est fourni dans le cadre du cours SYS828-Systèmes Biométriques. 
+- Dataset : lfw_people
 
-Ceci n'est qu'une ébauche de code devant vous aider à répondre au problème présenté dans la partie approfondissements du document PDF "Sujet - Rapport de laboratoire".
